@@ -225,9 +225,9 @@ final class LocalLLM: @unchecked Sendable {
         let prepared = promptText.withUnsafeMutableBufferPointer { buffer -> Int32 in
             input.text = buffer.baseAddress.map { UnsafePointer($0) }
             input.text_len = prompt.utf8.count
-            var bitmapPointer: UnsafePointer<mtmd_bitmap>? = bitmap
-            return withUnsafeMutablePointer(to: &bitmapPointer) { pointer in
-                mtmd_tokenize(projector, chunks, &input, pointer, 1)
+            var bitmaps: [OpaquePointer?] = [bitmap]
+            return bitmaps.withUnsafeMutableBufferPointer { pointer in
+                mtmd_tokenize(projector, chunks, &input, pointer.baseAddress, 1)
             }
         }
         guard prepared == 0 else {
