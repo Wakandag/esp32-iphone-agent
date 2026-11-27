@@ -705,16 +705,33 @@ import UIKit
         }
         do {
             let client = try await settings.client("actor")
-            let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
-                UIColor.red.setFill()
-                context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
-            }.jpegData(compressionQuality: 0.8)
-            let r = try await client.chat(system: "Name the dominant color in the image. Reply with one English word.",
-                                          text: "What color is this image?", image: image, maxTokens: 600, temperature: 0)
+            // The colour probe is for hosted vision models: Qwen2-VL misreads a flat red square
+            // (llama.cpp's own CLI does too, on the official weights), so the bundled model is
+            // checked on the phone's own screen — the picture it has to read during a run anyway.
+            let onDevice = client.model.lowercased() == LocalModelSupport.modelID
+            var image: Data?
+            if onDevice {
+                try? await refreshScreen()
+                image = feed.frame.map(ModelImage.forModel)
+            } else {
+                image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
+                    UIColor.red.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+                }.jpegData(compressionQuality: 0.8)
+            }
+            guard let image else {
+                modelError = String(localized: "Start Screen Mirroring: the on-device model is checked on a screenshot.")
+                return
+            }
+            let r = try await client.chat(system: onDevice
+                                          ? "You describe iPhone screenshots. Reply with one short sentence about what is on the screen."
+                                          : "Name the dominant color in the image. Reply with one English word.",
+                                          text: onDevice ? "Describe this screen." : "What color is this image?",
+                                          image: image, maxTokens: onDevice ? 120 : 600, temperature: 0)
             guard revision == settings.configurationRevision else { return }
             modelFirstTokenSeconds = r.firstToken
             modelResponseSeconds = r.responseSeconds
-            try ModelConnectionCheck.validate(r, onDevice: client.model.lowercased() == LocalModelSupport.modelID)
+            try ModelConnectionCheck.validate(r, onDevice: onDevice)
             metrics.llmPingMs = (now() - started) * 1000
             metrics.llm(first: r.firstToken, total: r.total)
             modelOK = true
