@@ -222,6 +222,7 @@ final class LocalLLM: @unchecked Sendable {
             throw LLMError(message: "The screenshot could not be read by the on-device model.")
         }
         defer { mtmd_bitmap_free(bitmap) }
+        DebugLog.write("local model: bitmap \(mtmd_bitmap_get_nx(bitmap))x\(mtmd_bitmap_get_ny(bitmap)) from \(image.count) bytes")
 
         guard let chunks = mtmd_input_chunks_init() else {
             throw LLMError(message: "The on-device model could not prepare the prompt.")
