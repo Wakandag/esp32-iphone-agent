@@ -54,7 +54,6 @@ final class LocalLLM: @unchecked Sendable {
         }
         var params = llama_model_default_params()
         params.n_gpu_layers = 0
-        params.use_mmap = true
         guard let loaded = llama_model_load_from_file(url.path, params) else {
             throw LLMError(message: "The on-device model failed to load (out of memory?).")
         }
