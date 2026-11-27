@@ -127,18 +127,18 @@ final class LocalLLM: @unchecked Sendable {
         defer { llama_free(ctx) }
 
         var promptTokens = 0
-        var logitsIndex: Int32 = -1
+        var position: llama_pos = 0
         let vision = image.flatMap { data -> (OpaquePointer, Data)? in
             guard let projector = loadedProjector(model) else { return nil }
             return (projector, data)
         }
 
         if let (projector, jpeg) = vision {
-            promptTokens = try prefillWithImage(projector: projector, ctx: ctx, model: model,
-                                                system: system, text: text, image: jpeg, logitsIndex: &logitsIndex)
+            (promptTokens, position) = try prefillWithImage(projector: projector, ctx: ctx,
+                                                            system: system, text: text, image: jpeg)
         } else {
-            promptTokens = try prefillText(ctx: ctx, vocab: vocab, system: system, text: text, maxTokens: maxTokens,
-                                           logitsIndex: &logitsIndex)
+            (promptTokens, position) = try prefillText(ctx: ctx, vocab: vocab, system: system, text: text,
+                                                       maxTokens: maxTokens)
         }
 
         let prefilled = Date()
@@ -146,15 +146,23 @@ final class LocalLLM: @unchecked Sendable {
         var output = ""
         var generated = 0
         var token: llama_token = -1
+        // Explicit positions: an image turn uses M-RoPE, so the text after it cannot rely on
+        // auto-numbered positions.
+        let batch = llama_batch_init(1, 0, 1)
+        defer { llama_batch_free(batch) }
 
         while generated < maxTokens {
             if token >= 0 {
-                var one: [llama_token] = [token]
-                var batch = llama_batch_get_one(&one, 1)
+                batch.n_tokens = 1
+                batch.token[0] = token
+                batch.pos[0] = position
+                batch.n_seq_id[0] = 1
+                batch.seq_id[0]![0] = 0
+                batch.logits[0] = 1
                 if llama_decode(ctx, batch) != 0 { break }
-                logitsIndex = -1
+                position += 1
             }
-            guard let logits = llama_get_logits_ith(ctx, logitsIndex) else { break }
+            guard let logits = llama_get_logits_ith(ctx, -1) else { break }
             let buffer = UnsafeBufferPointer(start: logits, count: nVocab)
             token = Self.sample(buffer, temperature: temperature)
             var piece = [CChar](repeating: 0, count: 128)
@@ -168,6 +176,7 @@ final class LocalLLM: @unchecked Sendable {
         if let cut = output.range(of: "<|im_end|>") { output = String(output[..<cut.lowerBound]) }
         output = output.replacingOccurrences(of: "<|im_start|>", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        DebugLog.write("local model: \(generated) tokens out in \(String(format: "%.1f", Date().timeIntervalSince(started))) s: \(output.prefix(120))")
         return ChatResult(text: output,
                           firstToken: prefilled.timeIntervalSince(started),
                           total: Date().timeIntervalSince(started),
@@ -177,7 +186,7 @@ final class LocalLLM: @unchecked Sendable {
 
     /// Text-only turn: ChatML prompt, decoded in batches.
     private func prefillText(ctx: OpaquePointer, vocab: OpaquePointer?, system: String, text: String,
-                             maxTokens: Int, logitsIndex: inout Int32) throws -> Int {
+                             maxTokens: Int) throws -> (tokens: Int, position: llama_pos) {
         let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
             + "<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
         var tokens = Self.tokenize(vocab, prompt)
@@ -191,16 +200,15 @@ final class LocalLLM: @unchecked Sendable {
             var chunk = Array(tokens[index..<(index + take)])
             var batch = llama_batch_get_one(&chunk, Int32(take))
             if llama_decode(ctx, batch) != 0 { throw LLMError(message: "On-device decode failed.") }
-            logitsIndex = Int32(take - 1)
             index += take
         }
-        return tokens.count
+        DebugLog.write("local model: text prompt \(tokens.count) tokens")
+        return (tokens.count, llama_pos(tokens.count))
     }
 
     /// One screenshot + text: llama.cpp's multimodal path (image encoder chunks, then text).
-    private func prefillWithImage(projector: OpaquePointer, ctx: OpaquePointer, model: OpaquePointer,
-                                  system: String, text: String, image: Data,
-                                  logitsIndex: inout Int32) throws -> Int {
+    private func prefillWithImage(projector: OpaquePointer, ctx: OpaquePointer,
+                                  system: String, text: String, image: Data) throws -> (tokens: Int, position: llama_pos) {
         let marker = String(cString: mtmd_get_marker(projector))
         let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
             + "<|im_start|>user\n\(marker)\n\(text)<|im_end|>\n<|im_start|>assistant\n"
@@ -239,8 +247,9 @@ final class LocalLLM: @unchecked Sendable {
         guard evaluated == 0 else {
             throw LLMError(message: "The on-device model could not read the screenshot (code \(evaluated)).")
         }
-        logitsIndex = -1
-        return Int(mtmd_helper_get_n_tokens(chunks))
+        let tokens = Int(mtmd_helper_get_n_tokens(chunks))
+        DebugLog.write("local model: image prompt \(tokens) tokens, \(mtmd_input_chunks_size(chunks)) chunks")
+        return (tokens, mtmd_helper_get_n_pos(chunks))
     }
 
     // MARK: llama.cpp helpers
