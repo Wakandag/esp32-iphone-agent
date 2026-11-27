@@ -1,9 +1,9 @@
 #!/bin/bash
 # Builds llama.cpp for iOS (arm64, CPU only) as static libs and stages the headers
 # under ios/llama/{libs,headers}, where the Xcode project looks for them.
+# `mtmd` is the multimodal library: it is what lets the on-device model see screenshots.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ROOT="$PWD"
 
 LLAMA_TAG=v1.0.0
 
@@ -27,7 +27,7 @@ cmake -S llama.cpp -B build/llama -G Xcode \
   -DLLAMA_BUILD_EXAMPLES=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_SERVER=OFF \
-  -DLLAMA_BUILD_TOOLS=ON
+  -DLLAMA_BUILD_TOOLS=ON \
   -DLLAMA_CURL=OFF
 
 cmake --build build/llama --config Release --target llama mtmd -j "$(sysctl -n hw.ncpu)"
