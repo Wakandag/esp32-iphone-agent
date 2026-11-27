@@ -190,6 +190,11 @@ struct LLMError: LocalizedError {
     /// Several screenshots in order (a demonstration's keyframes), then the text. An empty reply is asked once more.
     func chat(system: String, text: String, images: [Data], maxTokens: Int = 600,
               temperature: Double = 0) async throws -> ChatResult {
+        // On-device: the model id `local` runs the bundled GGUF through llama.cpp, no network at all.
+        if model.lowercased() == LocalModelSupport.modelID, LocalModelSupport.isAvailable {
+            return try await LocalModelSupport.chat(system: system, text: text, maxTokens: maxTokens,
+                                                    temperature: temperature)
+        }
         let first = try await once(system: system, text: text, images: images, maxTokens: maxTokens, temperature: temperature)
         guard first.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return first }
         DebugLog.write("llm: empty reply (finish \(first.finishReason ?? "-"), reasoning \(first.reasoningChars) chars); asking once more")

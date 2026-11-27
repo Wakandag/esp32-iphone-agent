@@ -23,9 +23,11 @@ IA_CAPTURE_BACKGROUND_MODE = bluetooth-central
 // Optional LLM preset for your own builds, set in Local.xcconfig (write "//" as "/$()/").
 // Never in a store build: fastlane's beta lane clears these and checks the built app.
 //   IA_PRESET_BASE_URL = https:/$()/example.com/v1
-IA_PRESET_BASE_URL =
-IA_PRESET_MODEL =
-IA_PRESET_KEY =
+// On-device model: model id `local` runs the bundled abliterated Qwen2.5 GGUF (llama.cpp).
+// No key, no network. Run scripts/build-llama.sh and scripts/fetch-model.sh before building.
+IA_PRESET_BASE_URL = https:/$()/local.invalid/v1
+IA_PRESET_MODEL = local
+IA_PRESET_KEY = local
 
 // Opt-in anonymous usage stats (a PostHog project API key, public by design). Empty = no switch and
 // nothing is sent: every local build, unless you set your own key (and host) in Local.xcconfig.

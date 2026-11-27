@@ -32,3 +32,8 @@ hardware/tests/sim/cli_sim
 hardware/tests/sim/cli_sim.dSYM/
 hardware/tests/sim/*.o
 hardware/tests/sim/screen.h264
+
+# On-device model build inputs (Scripts/build-llama.sh, Scripts/fetch-model.sh)
+llama.cpp/
+ios/llama/
+ios/IPhoneAgent/LocalModel/Resources/*.gguf

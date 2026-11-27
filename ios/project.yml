@@ -30,6 +30,11 @@ targets:
       - path: ../prompts  # the model prompts, bundled as a folder
         type: folder
         buildPhase: resources
+      # On-device model (Scripts/fetch-model.sh). Optional: a checkout without it still builds.
+      - path: IPhoneAgent/LocalModel/Resources
+        type: folder
+        buildPhase: resources
+        optional: true
     dependencies:
       - target: AgentActivity
         embed: true
@@ -99,6 +104,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+        # llama.cpp static libs (Scripts/build-llama.sh) for the on-device model.
+        LIBRARY_SEARCH_PATHS: $(inherited) $(SRCROOT)/llama/libs
+        HEADER_SEARCH_PATHS: $(inherited) $(SRCROOT)/llama/headers
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/llama/headers
+        OTHER_LDFLAGS: $(inherited) -lggml -lggml-base -lggml-cpu -lllama -lc++
         # Hotspot entitlement needs an Apple ID in Xcode; opt in via Local.xcconfig.
         CODE_SIGN_ENTITLEMENTS: $(IA_ENTITLEMENTS)
   AgentActivity:
