@@ -41,6 +41,9 @@ import mtmd
 final class LocalLLM: @unchecked Sendable {
     static let shared = LocalLLM()
 
+    /// The most this phone answers in one turn; see the note in `generate`.
+    static let maxOutputTokens = 320
+
     private let lock = NSLock()
     private var model: OpaquePointer?
     private var projector: OpaquePointer?
@@ -116,6 +119,10 @@ final class LocalLLM: @unchecked Sendable {
         let started = Date()
         let model = try loadedModel()
         let vocab = llama_model_get_vocab(model)
+        // iOS ends a background app that keeps the CPU busy (`cpu_resource_fatal`): a long reply
+        // never finishes, so the on-device model answers in a few sentences at most.
+        let limit = min(maxTokens, Self.maxOutputTokens)
+        if limit < maxTokens { DebugLog.write("local model: answering within \(limit) tokens (asked for \(maxTokens))") }
 
         var cparams = llama_context_default_params()
         cparams.n_ctx = 8192
@@ -139,7 +146,7 @@ final class LocalLLM: @unchecked Sendable {
                                                             system: system, text: text, image: jpeg)
         } else {
             (promptTokens, position) = try prefillText(ctx: ctx, vocab: vocab, system: system, text: text,
-                                                       maxTokens: maxTokens)
+                                                       maxTokens: limit)
         }
 
         let prefilled = Date()
@@ -152,7 +159,7 @@ final class LocalLLM: @unchecked Sendable {
         var batch = llama_batch_init(1, 0, 1)
         defer { llama_batch_free(batch) }
 
-        while generated < maxTokens {
+        while generated < limit {
             if token >= 0 {
                 batch.n_tokens = 1
                 batch.token[0] = token
@@ -171,6 +178,9 @@ final class LocalLLM: @unchecked Sendable {
             if written <= 0 { break }
             output += String(decoding: piece[0..<Int(written)].map { UInt8(bitPattern: $0) }, as: UTF8.self)
             generated += 1
+            if generated % 8 == 0 {
+                DebugLog.write("local model: \(generated) tokens in \(String(format: "%.1f", Date().timeIntervalSince(prefilled))) s")
+            }
             if output.contains("<|im_end|>") { break }
         }
 
@@ -181,7 +191,7 @@ final class LocalLLM: @unchecked Sendable {
         return ChatResult(text: output,
                           firstToken: prefilled.timeIntervalSince(started),
                           total: Date().timeIntervalSince(started),
-                          finishReason: generated >= maxTokens ? "length" : "stop",
+                          finishReason: generated >= limit ? "length" : "stop",
                           usage: ["prompt_tokens": promptTokens, "completion_tokens": generated])
     }
 
@@ -245,7 +255,13 @@ final class LocalLLM: @unchecked Sendable {
             throw LLMError(message: "The on-device model could not tokenize the screenshot (code \(prepared)).")
         }
 
-        DebugLog.write("local model: tokenized \(mtmd_helper_get_n_tokens(chunks)) tokens in \(mtmd_input_chunks_size(chunks)) chunks, n_ctx \(llama_n_ctx(ctx))")
+        var shape: [String] = []
+        for index in 0..<Int(mtmd_input_chunks_size(chunks)) {
+            guard let chunk = mtmd_input_chunks_get(chunks, index) else { continue }
+            let kind = mtmd_input_chunk_get_type(chunk).rawValue == 1 ? "image" : "text"
+            shape.append("\(kind) \(mtmd_input_chunk_get_n_tokens(chunk))")
+        }
+        DebugLog.write("local model: prompt \(mtmd_helper_get_n_tokens(chunks)) tokens (\(shape.joined(separator: ", "))), n_ctx \(llama_n_ctx(ctx))")
         var past: llama_pos = 0
         let evaluated = mtmd_helper_eval_chunks(projector, ctx, chunks, 0, 0, 512, true, &past)
         guard evaluated == 0 else {
