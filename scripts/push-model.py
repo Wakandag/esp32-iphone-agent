@@ -25,6 +25,7 @@ def parse_args():
     p.add_argument("--password", default=os.environ.get("IOS_PW", "alpine"))
     p.add_argument("--bundle", default="com.screenagent.app")
     p.add_argument("--chunk-mb", type=int, default=40)
+    p.add_argument("--remote-name", default="model.gguf")
     return p.parse_args()
 
 
@@ -70,7 +71,7 @@ def main():
     phone = Phone(args)
     documents = container_documents(phone, args.bundle)
     phone.sh("mkdir -p %s && rm -rf %s && mkdir -p %s" % (documents, PARTS, PARTS))
-    print("pushing %s (%.0f MB) to %s/model.gguf in %d chunks" % (os.path.basename(args.model), size / 1048576.0, documents, total))
+    print("pushing %s (%.0f MB) to %s/%s in %d chunks" % (os.path.basename(args.model), size / 1048576.0, documents, args.remote_name, total))
 
     started = time.time()
     with open(args.model, "rb") as handle:
@@ -96,7 +97,7 @@ def main():
             else:
                 sys.exit("chunk %d never arrived" % (index + 1))
 
-    target = documents + "/model.gguf"
+    target = documents + "/" + args.remote_name
     phone.sh("cat %s/p* > %s && rm -rf %s && chown -R mobile:mobile %s" % (PARTS, target, PARTS, documents))
     print(phone.sh("wc -c < %s" % target)[0] or "0", "bytes in", target)
     phone.client.close()

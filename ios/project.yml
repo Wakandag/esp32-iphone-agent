@@ -103,7 +103,7 @@ targets:
         LIBRARY_SEARCH_PATHS: $(inherited) $(SRCROOT)/llama/libs
         HEADER_SEARCH_PATHS: $(inherited) $(SRCROOT)/llama/headers
         SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/llama/headers
-        OTHER_LDFLAGS: $(inherited) -lggml -lggml-base -lggml-cpu -lllama -lc++
+        OTHER_LDFLAGS: $(inherited) -lggml -lggml-base -lggml-cpu -lllama -lmtmd -lc++
         # Hotspot entitlement needs an Apple ID in Xcode; opt in via Local.xcconfig.
         CODE_SIGN_ENTITLEMENTS: $(IA_ENTITLEMENTS)
   AgentActivity:

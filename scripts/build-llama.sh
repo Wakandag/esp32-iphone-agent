@@ -27,17 +27,24 @@ cmake -S llama.cpp -B build/llama -G Xcode \
   -DLLAMA_BUILD_EXAMPLES=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_SERVER=OFF \
-  -DLLAMA_BUILD_TOOLS=OFF
+  -DLLAMA_BUILD_TOOLS=ON
+  -DLLAMA_CURL=OFF
 
-cmake --build build/llama --config Release --target llama -j "$(sysctl -n hw.ncpu)"
+cmake --build build/llama --config Release --target llama mtmd -j "$(sysctl -n hw.ncpu)"
 
 mkdir -p ios/llama/libs ios/llama/headers
 find build/llama -name "*.a" -exec cp {} ios/llama/libs/ \;
 cp llama.cpp/include/*.h ios/llama/headers/
 cp llama.cpp/ggml/include/*.h ios/llama/headers/
+cp llama.cpp/tools/mtmd/*.h ios/llama/headers/
 cat > ios/llama/headers/module.modulemap <<'EOF'
 module llama {
     header "llama.h"
+    export *
+}
+module mtmd {
+    header "mtmd.h"
+    header "mtmd-helper.h"
     export *
 }
 EOF

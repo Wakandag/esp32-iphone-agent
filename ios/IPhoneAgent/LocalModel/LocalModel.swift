@@ -1,29 +1,29 @@
 import Foundation
 
-/// The on-device model: llama.cpp over a GGUF bundled in the app. Chosen by the model id `local`,
-/// so nothing else in the app changes — Settings just needs model `local` (the build seeds it).
+/// The on-device model: llama.cpp over a GGUF bundled on the device. Chosen by the model id `local`,
+/// so nothing else in the app changes. With a projector (mmproj.gguf) it also sees screenshots.
 enum LocalModelSupport {
     static let modelID = "local"
 
     static var isAvailable: Bool {
         #if canImport(llama)
-        return LocalLLM.bundleModelURL != nil
+        return LocalLLM.modelURL != nil
         #else
         return false
         #endif
     }
 
     static var modelName: String {
-        Self.isAvailable ? "Qwen2.5 abliterated (on-device)" : "no on-device model"
+        Self.isAvailable ? "Qwen2-VL abliterated (on-device)" : "no on-device model"
     }
 
-    /// Text-only: the bundled model sees no screenshots, only the text the agent was going to send.
-    static func chat(system: String, text: String, maxTokens: Int, temperature: Double) async throws -> ChatResult {
+    static func chat(system: String, text: String, image: Data?, maxTokens: Int,
+                     temperature: Double) async throws -> ChatResult {
         #if canImport(llama)
         let runner = LocalLLM.shared
         return try await Task.detached(priority: .userInitiated) {
-            try runner.generate(system: system, text: text, maxTokens: maxTokens,
-                                temperature: Double(temperature))
+            try runner.generate(system: system, text: text, image: image,
+                                maxTokens: maxTokens, temperature: temperature)
         }.value
         #else
         throw LLMError(message: "This build has no on-device model bundled.")
@@ -33,35 +33,51 @@ enum LocalModelSupport {
 
 #if canImport(llama)
 import llama
+import mtmd
 
-/// Loads the GGUF once and runs one chat turn per call (a fresh context each time, so turns never
-/// inherit each other's KV cache). CPU only: no Metal, which keeps the iOS build simple.
+/// One GGUF text model (plus an optional vision projector), loaded once and used for one turn per call.
+/// CPU only: no Metal, which keeps the iOS build simple.
 final class LocalLLM: @unchecked Sendable {
     static let shared = LocalLLM()
 
     private let lock = NSLock()
     private var model: OpaquePointer?
+    private var projector: OpaquePointer?
+    private var projectorTried = false
 
-    /// Where the GGUF lives, in order of preference: the app's own Documents folder (pushed once over
-    /// the filesystem, keeps working across reinstalls), then the bundle for a build that ships it.
-    static var bundleModelURL: URL? {
+    // MARK: files
+
+    /// `Documents/model.gguf` first (pushed over the filesystem, survives reinstalls), then the bundle.
+    static var modelURL: URL? {
+        find("model.gguf")
+    }
+
+    /// `Documents/mmproj.gguf`: without it the model answers text only.
+    static var projectorURL: URL? {
+        find("mmproj.gguf")
+    }
+
+    private static func find(_ name: String) -> URL? {
         let files = FileManager.default
         if let docs = files.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let pushed = docs.appendingPathComponent("model.gguf")
+            let pushed = docs.appendingPathComponent(name)
             if files.fileExists(atPath: pushed.path) { return pushed }
         }
         if let support = files.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let local = support.appendingPathComponent("model.gguf")
+            let local = support.appendingPathComponent(name)
             if files.fileExists(atPath: local.path) { return local }
         }
-        return Bundle.main.url(forResource: "model", withExtension: "gguf")
-            ?? Bundle.main.url(forResource: "model", withExtension: "gguf", subdirectory: "Resources")
+        let base = (name as NSString).deletingPathExtension
+        return Bundle.main.url(forResource: base, withExtension: "gguf")
+            ?? Bundle.main.url(forResource: base, withExtension: "gguf", subdirectory: "Resources")
     }
+
+    // MARK: loading
 
     private func loadedModel() throws -> OpaquePointer {
         if let model { return model }
-        guard let url = Self.bundleModelURL else {
-            throw LLMError(message: "model.gguf is missing from this build.")
+        guard let url = Self.modelURL else {
+            throw LLMError(message: "model.gguf is missing from this device.")
         }
         var params = llama_model_default_params()
         params.n_gpu_layers = 0
@@ -72,7 +88,27 @@ final class LocalLLM: @unchecked Sendable {
         return loaded
     }
 
-    func generate(system: String, text: String, maxTokens: Int, temperature: Double) throws -> ChatResult {
+    /// The vision projector, or nil when this device has none (text-only replies then).
+    private func loadedProjector(_ model: OpaquePointer) -> OpaquePointer? {
+        if let projector { return projector }
+        if projectorTried { return nil }
+        projectorTried = true
+        guard let url = Self.projectorURL else { return nil }
+        var params = mtmd_context_params_default()
+        params.use_gpu = false
+        params.print_timings = false
+        params.n_threads = 4
+        guard let ctx = mtmd_init_from_file(url.path, model, params), mtmd_support_vision(ctx) else {
+            return nil
+        }
+        projector = ctx
+        return ctx
+    }
+
+    // MARK: one turn
+
+    func generate(system: String, text: String, image: Data?, maxTokens: Int,
+                  temperature: Double) throws -> ChatResult {
         lock.lock()
         defer { lock.unlock() }
 
@@ -82,7 +118,7 @@ final class LocalLLM: @unchecked Sendable {
 
         var cparams = llama_context_default_params()
         cparams.n_ctx = 4096
-        cparams.n_batch = 256
+        cparams.n_batch = 512
         cparams.n_threads = 4
         cparams.n_threads_batch = 4
         guard let ctx = llama_init_from_model(model, cparams) else {
@@ -90,23 +126,19 @@ final class LocalLLM: @unchecked Sendable {
         }
         defer { llama_free(ctx) }
 
-        let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
-            + "<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
-        var tokens = Self.tokenize(vocab, prompt)
-        let budget = Int(cparams.n_ctx) - max(64, maxTokens)
-        if tokens.count > budget { tokens = Array(tokens.suffix(budget)) }
-        guard !tokens.isEmpty else { throw LLMError(message: "The prompt was empty.") }
+        var promptTokens = 0
+        var logitsIndex: Int32 = -1
+        let vision = image.flatMap { data -> (OpaquePointer, Data)? in
+            guard let projector = loadedProjector(model) else { return nil }
+            return (projector, data)
+        }
 
-        // Prefill in batches; a batch's logits land on its last token.
-        var index = 0
-        var logitsIndex: Int32 = 0
-        while index < tokens.count {
-            let take = min(256, tokens.count - index)
-            var chunk = Array(tokens[index..<(index + take)])
-            var batch = llama_batch_get_one(&chunk, Int32(take))
-            if llama_decode(ctx, batch) != 0 { throw LLMError(message: "On-device decode failed.") }
-            logitsIndex = Int32(take - 1)
-            index += take
+        if let (projector, jpeg) = vision {
+            promptTokens = try prefillWithImage(projector: projector, ctx: ctx, model: model,
+                                                system: system, text: text, image: jpeg, logitsIndex: &logitsIndex)
+        } else {
+            promptTokens = try prefillText(ctx: ctx, vocab: vocab, system: system, text: text, maxTokens: maxTokens,
+                                           logitsIndex: &logitsIndex)
         }
 
         let prefilled = Date()
@@ -120,14 +152,13 @@ final class LocalLLM: @unchecked Sendable {
                 var one: [llama_token] = [token]
                 var batch = llama_batch_get_one(&one, 1)
                 if llama_decode(ctx, batch) != 0 { break }
-                logitsIndex = 0
+                logitsIndex = -1
             }
             guard let logits = llama_get_logits_ith(ctx, logitsIndex) else { break }
             let buffer = UnsafeBufferPointer(start: logits, count: nVocab)
-            let next = Self.sample(buffer, temperature: temperature)
-            token = next
+            token = Self.sample(buffer, temperature: temperature)
             var piece = [CChar](repeating: 0, count: 128)
-            let written = llama_token_to_piece(vocab, next, &piece, 127, 0, true)
+            let written = llama_token_to_piece(vocab, token, &piece, 127, 0, true)
             if written <= 0 { break }
             output += String(decoding: piece[0..<Int(written)].map { UInt8(bitPattern: $0) }, as: UTF8.self)
             generated += 1
@@ -137,12 +168,80 @@ final class LocalLLM: @unchecked Sendable {
         if let cut = output.range(of: "<|im_end|>") { output = String(output[..<cut.lowerBound]) }
         output = output.replacingOccurrences(of: "<|im_start|>", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let total = Date().timeIntervalSince(started)
         return ChatResult(text: output,
                           firstToken: prefilled.timeIntervalSince(started),
-                          total: total,
+                          total: Date().timeIntervalSince(started),
                           finishReason: generated >= maxTokens ? "length" : "stop",
-                          usage: ["prompt_tokens": tokens.count, "completion_tokens": generated])
+                          usage: ["prompt_tokens": promptTokens, "completion_tokens": generated])
+    }
+
+    /// Text-only turn: ChatML prompt, decoded in batches.
+    private func prefillText(ctx: OpaquePointer, vocab: OpaquePointer?, system: String, text: String,
+                             maxTokens: Int, logitsIndex: inout Int32) throws -> Int {
+        let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
+            + "<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
+        var tokens = Self.tokenize(vocab, prompt)
+        let budget = 4096 - max(64, maxTokens)
+        if tokens.count > budget { tokens = Array(tokens.suffix(budget)) }
+        guard !tokens.isEmpty else { throw LLMError(message: "The prompt was empty.") }
+
+        var index = 0
+        while index < tokens.count {
+            let take = min(256, tokens.count - index)
+            var chunk = Array(tokens[index..<(index + take)])
+            var batch = llama_batch_get_one(&chunk, Int32(take))
+            if llama_decode(ctx, batch) != 0 { throw LLMError(message: "On-device decode failed.") }
+            logitsIndex = Int32(take - 1)
+            index += take
+        }
+        return tokens.count
+    }
+
+    /// One screenshot + text: llama.cpp's multimodal path (image encoder chunks, then text).
+    private func prefillWithImage(projector: OpaquePointer, ctx: OpaquePointer, model: OpaquePointer,
+                                  system: String, text: String, image: Data,
+                                  logitsIndex: inout Int32) throws -> Int {
+        let marker = String(cString: mtmd_get_marker(projector))
+        let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
+            + "<|im_start|>user\n\(marker)\n\(text)<|im_end|>\n<|im_start|>assistant\n"
+
+        var options = mtmd_helper_init_opt_default()
+        var wrapper = image.withUnsafeBytes { buffer -> mtmd_helper_bitmap_wrapper in
+            let base = buffer.bindMemory(to: UInt8.self).baseAddress
+            return mtmd_helper_bitmap_init_from_buf(projector, base, image.count, options)
+        }
+        guard let bitmap = wrapper.bitmap else {
+            throw LLMError(message: "The screenshot could not be read by the on-device model.")
+        }
+        defer { mtmd_bitmap_free(bitmap) }
+        _ = options
+
+        guard let chunks = mtmd_input_chunks_init() else {
+            throw LLMError(message: "The on-device model could not prepare the prompt.")
+        }
+        defer { mtmd_input_chunks_free(chunks) }
+
+        var promptText = Array(prompt.utf8CString)
+        var input = mtmd_input_text(text: nil, text_len: 0, add_special: true, parse_special: true)
+        let prepared = promptText.withUnsafeMutableBufferPointer { buffer -> Int32 in
+            input.text = buffer.baseAddress
+            input.text_len = prompt.utf8.count
+            var bitmapPointer: UnsafePointer<mtmd_bitmap>? = bitmap
+            return withUnsafeMutablePointer(to: &bitmapPointer) { pointer in
+                mtmd_tokenize(projector, chunks, &input, pointer, 1)
+            }
+        }
+        guard prepared == 0 else {
+            throw LLMError(message: "The on-device model could not tokenize the screenshot (code \(prepared)).")
+        }
+
+        var past: llama_pos = 0
+        let evaluated = mtmd_helper_eval_chunks(projector, ctx, chunks, 0, 0, 512, true, &past)
+        guard evaluated == 0 else {
+            throw LLMError(message: "The on-device model could not read the screenshot (code \(evaluated)).")
+        }
+        logitsIndex = -1
+        return Int(mtmd_helper_get_n_tokens(chunks))
     }
 
     // MARK: llama.cpp helpers
@@ -175,7 +274,6 @@ final class LocalLLM: @unchecked Sendable {
             return llama_token(best)
         }
 
-        // Top-k by insertion: keeps the pass linear over the vocabulary.
         var bestIndex = [Int](repeating: 0, count: k)
         var bestValue = [Float](repeating: -Float.infinity, count: k)
         var filled = 0
