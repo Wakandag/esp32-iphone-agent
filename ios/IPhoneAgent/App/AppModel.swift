@@ -714,7 +714,7 @@ import UIKit
             guard revision == settings.configurationRevision else { return }
             modelFirstTokenSeconds = r.firstToken
             modelResponseSeconds = r.responseSeconds
-            try ModelConnectionCheck.validate(r)
+            try ModelConnectionCheck.validate(r, onDevice: client.model.lowercased() == LocalModelSupport.modelID)
             metrics.llmPingMs = (now() - started) * 1000
             metrics.llm(first: r.firstToken, total: r.total)
             modelOK = true
