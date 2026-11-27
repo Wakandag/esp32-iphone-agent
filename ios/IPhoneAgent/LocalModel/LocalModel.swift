@@ -42,8 +42,19 @@ final class LocalLLM: @unchecked Sendable {
     private let lock = NSLock()
     private var model: OpaquePointer?
 
+    /// Where the GGUF lives, in order of preference: the app's own Documents folder (pushed once over
+    /// the filesystem, keeps working across reinstalls), then the bundle for a build that ships it.
     static var bundleModelURL: URL? {
-        Bundle.main.url(forResource: "model", withExtension: "gguf")
+        let files = FileManager.default
+        if let docs = files.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let pushed = docs.appendingPathComponent("model.gguf")
+            if files.fileExists(atPath: pushed.path) { return pushed }
+        }
+        if let support = files.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let local = support.appendingPathComponent("model.gguf")
+            if files.fileExists(atPath: local.path) { return local }
+        }
+        return Bundle.main.url(forResource: "model", withExtension: "gguf")
             ?? Bundle.main.url(forResource: "model", withExtension: "gguf", subdirectory: "Resources")
     }
 

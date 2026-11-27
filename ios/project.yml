@@ -20,9 +20,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: IPhoneAgent
-        excludes:  # the bundled GGUF is added once, as a folder resource, below
-          - LocalModel/Resources
+      - IPhoneAgent
       - Shared
       # Siri AI Developer Preview: a Skills bundle Siri reads for multi-step guidance. Copying the
       # folder keeps Skills.skillsbundle/ as a bundle in the app instead of a loose folder.
@@ -32,11 +30,6 @@ targets:
       - path: ../prompts  # the model prompts, bundled as a folder
         type: folder
         buildPhase: resources
-      # On-device model (Scripts/fetch-model.sh). Optional: a checkout without it still builds.
-      - path: IPhoneAgent/LocalModel/Resources
-        type: folder
-        buildPhase: resources
-        optional: true
     dependencies:
       - target: AgentActivity
         embed: true

@@ -19,9 +19,6 @@ jobs:
           chmod +x scripts/build-llama.sh scripts/fetch-model.sh
           ./scripts/build-llama.sh
 
-      - name: Fetch on-device model
-        run: ./scripts/fetch-model.sh
-
       - name: Generate Xcode project
         run: |
           brew install xcodegen
