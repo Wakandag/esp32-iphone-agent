@@ -33,8 +33,8 @@ cmake --build build/llama --config Release --target llama -j "$(sysctl -n hw.ncp
 
 mkdir -p ios/llama/libs ios/llama/headers
 find build/llama -name "*.a" -exec cp {} ios/llama/libs/ \;
-cp llama.cpp/include/llama.h ios/llama/headers/llama.h
-cp llama.cpp/ggml/include/ggml.h ios/llama/headers/ggml.h 2>/dev/null || true
+cp llama.cpp/include/*.h ios/llama/headers/
+cp llama.cpp/ggml/include/*.h ios/llama/headers/
 cat > ios/llama/headers/module.modulemap <<'EOF'
 module llama {
     header "llama.h"
