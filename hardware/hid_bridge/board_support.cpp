@@ -14,7 +14,10 @@ extern const char firmware_target[16]
     __attribute__((section(".rodata_custom_desc"), used))
 #endif
     =
-#ifdef M5_STOPWATCH
+#ifdef OTA_TARGET_USB8M
+    // Delivered over this board's own OTA channel, which accepts usb-8m images only.
+    "ESPA:usb-8m";
+#elif defined(M5_STOPWATCH)
     "ESPA:stopwatch";
 #elif defined(ZECTRIX_NOTE4)
     "ESPA:note4-ble";

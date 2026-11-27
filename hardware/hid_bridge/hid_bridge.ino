@@ -117,6 +117,11 @@ uint8_t keyCode(const String &k) {
   return k.length() == 1 ? k[0] : 0;
 }
 
+// Core 3.3.0 dropped the name for Consumer-page Eject (usage 0xB8).
+#ifndef HID_USAGE_CONSUMER_EJECT
+#define HID_USAGE_CONSUMER_EJECT 0xB8
+#endif
+
 bool pressCombo(String combo) {
   if (combo == "eject") {
     // iOS toggles the on-screen keyboard once per Consumer Control Eject press.

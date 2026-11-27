@@ -155,7 +155,7 @@ enum UIDetector {
 
         func value(_ channel: Int, _ anchor: Int) -> Float {
             let indices = (lead + (channelFirst ? [channel, anchor] : [anchor, channel])).map { NSNumber(value: $0) }
-            return array[indices]?.floatValue ?? 0
+            return array[indices].floatValue
         }
 
         var found: [UIDetection] = []

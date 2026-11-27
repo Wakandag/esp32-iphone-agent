@@ -16,12 +16,14 @@ static BleHidTarget target;
 static unsigned lastGeneration;
 static bool failed, releasePending;
 static uint8_t mouseButtons, keys[8];
+// Boot-mouse report: buttons, X, Y, wheel. No report ID, no pan byte.
+static const size_t MOUSE_REPORT_SIZE = 4;
 static uint32_t batteryAt, lastReportAt;
 static volatile uint32_t reportsSent, reportsFailed, reportsWaited, reportMaxMs;  // ble_hid_diag
 
 static void resetReports() {
   uint8_t zero[8] = {};
-  inputs[0]->setValue(zero, 5);
+  inputs[0]->setValue(zero, MOUSE_REPORT_SIZE);
   inputs[1]->setValue(zero, 8);
   inputs[2]->setValue(zero, 2);
 }
@@ -36,8 +38,20 @@ static HidSubscription hidSubscription;
 void ble_hid_begin(NimBLEServer *server) {
   auto *hid = new NimBLEHIDDevice(server);
   hidDevice = hid;
+  // The mouse collection is emitted WITHOUT a report ID and with the boot-mouse
+  // field layout (buttons, X, Y, wheel = 4 bytes). iOS only starts drawing a
+  // pointer for an unnumbered pointing-device collection; with REPORT_ID(1) the
+  // reports were accepted (hid=ok) but no cursor ever appeared.
   static uint8_t map[] = {
-    TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(1)),
+    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01,        // Generic Desktop, Mouse, Application
+    0x09, 0x01, 0xA1, 0x00,                    //   Pointer, Physical
+    0x05, 0x09, 0x19, 0x01, 0x29, 0x03,        //     Buttons 1-3
+    0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
+    0x95, 0x01, 0x75, 0x05, 0x81, 0x03,        //     padding
+    0x05, 0x01, 0x09, 0x30, 0x09, 0x31,        //     X, Y
+    0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x02, 0x81, 0x06,
+    0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,  // Wheel
+    0xC0, 0xC0,
     TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(2)),
     TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(3))
   };
@@ -142,7 +156,7 @@ void ble_hid_poll(bool timedHold) {
   if (ble_hid_ready() && (releasePending || (!timedHold && mouseButtons && now - lastReportAt >= 5000))) {
     if (!ble_hid_command_begin(lastGeneration)) return;
     uint8_t zero[8] = {};
-    send(0, zero, 5);
+    send(0, zero, MOUSE_REPORT_SIZE);
     send(1, zero, 8);
     send(2, zero, 2);
     if (!failed) {
@@ -159,7 +173,8 @@ void ble_hid_poll(bool timedHold) {
 }
 
 void BleHidMouse::move(int8_t x, int8_t y, int8_t wheel, int8_t pan) {
-  int8_t report[] = {static_cast<int8_t>(mouseButtons), x, y, wheel, pan};
+  (void)pan;
+  int8_t report[MOUSE_REPORT_SIZE] = {static_cast<int8_t>(mouseButtons), x, y, wheel};
   send(0, report, sizeof report);
 }
 void BleHidMouse::press(uint8_t buttons) { mouseButtons |= buttons; move(0, 0); }
