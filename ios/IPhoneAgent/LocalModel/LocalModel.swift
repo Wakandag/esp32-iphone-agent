@@ -205,16 +205,15 @@ final class LocalLLM: @unchecked Sendable {
         let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
             + "<|im_start|>user\n\(marker)\n\(text)<|im_end|>\n<|im_start|>assistant\n"
 
-        var options = mtmd_helper_init_opt_default()
-        var wrapper = image.withUnsafeBytes { buffer -> mtmd_helper_bitmap_wrapper in
+        let options = mtmd_helper_init_opt_default()
+        let wrapper = image.withUnsafeBytes { buffer -> mtmd_helper_bitmap_wrapper in
             let base = buffer.bindMemory(to: UInt8.self).baseAddress
-            return mtmd_helper_bitmap_init_from_buf(projector, base, image.count, options)
+            return mtmd_helper_bitmap_init_from_buf(projector, base, image.count, false, options)
         }
         guard let bitmap = wrapper.bitmap else {
             throw LLMError(message: "The screenshot could not be read by the on-device model.")
         }
         defer { mtmd_bitmap_free(bitmap) }
-        _ = options
 
         guard let chunks = mtmd_input_chunks_init() else {
             throw LLMError(message: "The on-device model could not prepare the prompt.")
@@ -224,7 +223,7 @@ final class LocalLLM: @unchecked Sendable {
         var promptText = Array(prompt.utf8CString)
         var input = mtmd_input_text(text: nil, text_len: 0, add_special: true, parse_special: true)
         let prepared = promptText.withUnsafeMutableBufferPointer { buffer -> Int32 in
-            input.text = buffer.baseAddress
+            input.text = buffer.baseAddress.map { UnsafePointer($0) }
             input.text_len = prompt.utf8.count
             var bitmapPointer: UnsafePointer<mtmd_bitmap>? = bitmap
             return withUnsafeMutablePointer(to: &bitmapPointer) { pointer in
