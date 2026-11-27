@@ -148,7 +148,7 @@ final class LocalLLM: @unchecked Sendable {
         var token: llama_token = -1
         // Explicit positions: an image turn uses M-RoPE, so the text after it cannot rely on
         // auto-numbered positions.
-        let batch = llama_batch_init(1, 0, 1)
+        var batch = llama_batch_init(1, 0, 1)
         defer { llama_batch_free(batch) }
 
         while generated < maxTokens {
