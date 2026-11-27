@@ -258,11 +258,11 @@ final class LocalLLM: @unchecked Sendable {
 
     /// The encoder's cost grows with the picture's area. iOS kills an app that spends too much CPU
     /// in the background (`cpu_resource_fatal`, seen at 768 px while the run had Notes in front),
-    /// and 448 px on the long side still reads a screen's layout, so anything bigger is scaled down.
+    /// measured here: ~0.09 MP needs more than the ~50 s budget, ~0.025 MP fits comfortably.
     private static func fitForEncoding(_ data: Data) -> Data {
         guard let source = UIImage(data: data) else { return data }
         let longest = max(source.size.width, source.size.height)
-        let cap: CGFloat = 448
+        let cap: CGFloat = 224
         guard longest > cap else { return data }
         let scale = cap / longest
         let size = CGSize(width: (source.size.width * scale).rounded(), height: (source.size.height * scale).rounded())
