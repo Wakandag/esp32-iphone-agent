@@ -256,12 +256,13 @@ final class LocalLLM: @unchecked Sendable {
         return (tokens, mtmd_helper_get_n_pos(chunks))
     }
 
-    /// The encoder's cost grows with the picture, and a full screenshot reads fine at 768 px on
-    /// its long side; anything bigger is scaled down before tokenizing.
+    /// The encoder's cost grows with the picture's area. iOS kills an app that spends too much CPU
+    /// in the background (`cpu_resource_fatal`, seen at 768 px while the run had Notes in front),
+    /// and 448 px on the long side still reads a screen's layout, so anything bigger is scaled down.
     private static func fitForEncoding(_ data: Data) -> Data {
         guard let source = UIImage(data: data) else { return data }
         let longest = max(source.size.width, source.size.height)
-        let cap: CGFloat = 768
+        let cap: CGFloat = 448
         guard longest > cap else { return data }
         let scale = cap / longest
         let size = CGSize(width: (source.size.width * scale).rounded(), height: (source.size.height * scale).rounded())
