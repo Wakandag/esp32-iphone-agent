@@ -33,7 +33,12 @@ cmake -S llama.cpp -B build/llama -G Xcode \
 cmake --build build/llama --config Release --target llama mtmd -j "$(sysctl -n hw.ncpu)"
 
 mkdir -p ios/llama/libs ios/llama/headers
+rm -f ios/llama/libs/*.a
 find build/llama -name "*.a" -exec cp {} ios/llama/libs/ \;
+# One archive for the app: mtmd needs helpers from a separate vendor archive, and merging
+# avoids guessing link flags and their order.
+libtool -static -o ios/llama/libs/libagentmodel.a ios/llama/libs/*.a
+find ios/llama/libs -name "*.a" ! -name "libagentmodel.a" -delete
 cp llama.cpp/include/*.h ios/llama/headers/
 cp llama.cpp/ggml/include/*.h ios/llama/headers/
 cp llama.cpp/tools/mtmd/*.h ios/llama/headers/
