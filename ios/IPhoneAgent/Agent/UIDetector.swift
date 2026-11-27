@@ -59,7 +59,11 @@ enum UIDetector {
             compiled = made
         }
         let configuration = MLModelConfiguration()
-        configuration.computeUnits = .all
+        // CPU only on purpose: an ML Program run on the Neural Engine hands back a multi array that lives in ANE
+        // memory, whose data pointer is NULL and whose subscript raises an ObjC exception no Swift `try` catches
+        // (IPhoneAgent-2026-11-27-155331 aborted the app inside MLMultiArray). A detector this small is fast enough
+        // on the CPU, and its output is then ordinary memory we can read.
+        configuration.computeUnits = .cpuOnly
         guard let model = try? MLModel(contentsOf: compiled, configuration: configuration) else {
             DebugLog.write("detector: CoreML refused \(url.lastPathComponent)")
             return nil
@@ -151,16 +155,28 @@ enum UIDetector {
         let channels = channelFirst ? a : b
         let anchors = channelFirst ? b : a
         guard channels >= 5, anchors > 0, anchors < 200_000 else { return [] }
-        let lead = shape.count > 2 ? Array(shape[0..<(shape.count - 2)]) : []
+        // A copy of the values, read through the data pointer: never through the subscript (see the note on the
+        // configuration). Anything that is not plain float32 there is left alone rather than risking a crash.
+        guard array.dataType == .float32, let pointer = array.dataPointer else { return [] }
+        let total = array.count
+        let values = Array(UnsafeBufferPointer(start: pointer.bindMemory(to: Float.self, capacity: total), count: total))
+        let strides = array.strides.map(\.intValue)
+        let strideA = strides[strides.count - 2], strideB = strides[strides.count - 1]
 
         func value(_ channel: Int, _ anchor: Int) -> Float {
-            let indices = (lead + (channelFirst ? [channel, anchor] : [anchor, channel])).map { NSNumber(value: $0) }
-            return array[indices].floatValue
+            let c = channelFirst ? channel : anchor
+            let n = channelFirst ? anchor : channel
+            let offset = c * strideA + n * strideB
+            return offset >= 0 && offset < values.count ? values[offset] : 0
         }
 
         var found: [UIDetection] = []
         for anchor in 0..<anchors {
+            // The score is the best class channel: (1, 5, N) has one at index 4, a COCO export has 80 from 4 on.
             var score = value(4, anchor)
+            if channels > 5 {
+                for channel in 5..<min(channels, 96) { score = max(score, value(channel, anchor)) }
+            }
             if score < 0 || score > 1 { score = 1 / (1 + exp(-score)) }  // older exports skip the sigmoid
             guard score >= minConfidence else { continue }
             let cx = value(0, anchor), cy = value(1, anchor), w = value(2, anchor), h = value(3, anchor)
