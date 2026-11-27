@@ -118,7 +118,7 @@ final class LocalLLM: @unchecked Sendable {
         let vocab = llama_model_get_vocab(model)
 
         var cparams = llama_context_default_params()
-        cparams.n_ctx = 4096
+        cparams.n_ctx = 8192
         cparams.n_batch = 512
         cparams.n_threads = 4
         cparams.n_threads_batch = 4
@@ -245,10 +245,11 @@ final class LocalLLM: @unchecked Sendable {
             throw LLMError(message: "The on-device model could not tokenize the screenshot (code \(prepared)).")
         }
 
-        DebugLog.write("local model: tokenized \(mtmd_input_chunks_size(chunks)) chunks, encoding")
+        DebugLog.write("local model: tokenized \(mtmd_helper_get_n_tokens(chunks)) tokens in \(mtmd_input_chunks_size(chunks)) chunks, n_ctx \(llama_n_ctx(ctx))")
         var past: llama_pos = 0
         let evaluated = mtmd_helper_eval_chunks(projector, ctx, chunks, 0, 0, 512, true, &past)
         guard evaluated == 0 else {
+            DebugLog.write("local model: eval failed code \(evaluated), past \(past)")
             throw LLMError(message: "The on-device model could not read the screenshot (code \(evaluated)).")
         }
         let tokens = Int(mtmd_helper_get_n_tokens(chunks))
