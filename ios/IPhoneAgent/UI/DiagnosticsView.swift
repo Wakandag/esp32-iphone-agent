@@ -8,6 +8,7 @@ struct DiagnosticsView: View {
     @ObservedObject var feed: VideoFeed
     @State private var busy = false
     @State private var shareURL: URL?
+    @State private var boxes = false
 
     var body: some View {
         List {
@@ -17,6 +18,7 @@ struct DiagnosticsView: View {
                 test("LLM ping", "bolt") { await app.pingLLM() }
                 test("Background test (10 min)", "moon.zzz") { await app.backgroundTest() }
                 Button { export() } label: { Label("Export traces", systemImage: "square.and.arrow.up") }
+                Button { boxes = true } label: { Label("UI boxes over the screen", systemImage: "rectangle.dashed") }
             }
             SwiftUI.Section("BLE") {
                 row("App-side video kbps", f(metrics.bleKbps))
@@ -88,6 +90,7 @@ struct DiagnosticsView: View {
         .navigationTitle("Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $shareURL) { ShareSheet(items: [$0]) }
+        .sheet(isPresented: $boxes) { UIDetectorView(feed: feed) }
         .task { if app.lanMode { await app.refreshHotspot() } }
     }
 
