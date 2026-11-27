@@ -157,9 +157,10 @@ enum UIDetector {
         guard channels >= 5, anchors > 0, anchors < 200_000 else { return [] }
         // A copy of the values, read through the data pointer: never through the subscript (see the note on the
         // configuration). Anything that is not plain float32 there is left alone rather than risking a crash.
-        guard array.dataType == .float32, let pointer = array.dataPointer else { return [] }
+        guard array.dataType == .float32, array.count > 0 else { return [] }
         let total = array.count
-        let values = Array(UnsafeBufferPointer(start: pointer.bindMemory(to: Float.self, capacity: total), count: total))
+        let pointer = array.dataPointer
+        let values = Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Float.self), count: total))
         let strides = array.strides.map(\.intValue)
         let strideA = strides[strides.count - 2], strideB = strides[strides.count - 1]
 
