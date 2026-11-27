@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// The on-device model: llama.cpp over a GGUF bundled on the device. Chosen by the model id `local`,
 /// so nothing else in the app changes. With a projector (mmproj.gguf) it also sees screenshots.
@@ -209,6 +210,7 @@ final class LocalLLM: @unchecked Sendable {
     /// One screenshot + text: llama.cpp's multimodal path (image encoder chunks, then text).
     private func prefillWithImage(projector: OpaquePointer, ctx: OpaquePointer,
                                   system: String, text: String, image: Data) throws -> (tokens: Int, position: llama_pos) {
+        let image = Self.fitForEncoding(image)
         let marker = String(cString: mtmd_get_marker(projector))
         let prompt = "<|im_start|>system\n\(system)<|im_end|>\n"
             + "<|im_start|>user\n\(marker)\n\(text)<|im_end|>\n<|im_start|>assistant\n"
@@ -243,6 +245,7 @@ final class LocalLLM: @unchecked Sendable {
             throw LLMError(message: "The on-device model could not tokenize the screenshot (code \(prepared)).")
         }
 
+        DebugLog.write("local model: tokenized \(mtmd_input_chunks_size(chunks)) chunks, encoding")
         var past: llama_pos = 0
         let evaluated = mtmd_helper_eval_chunks(projector, ctx, chunks, 0, 0, 512, true, &past)
         guard evaluated == 0 else {
@@ -251,6 +254,23 @@ final class LocalLLM: @unchecked Sendable {
         let tokens = Int(mtmd_helper_get_n_tokens(chunks))
         DebugLog.write("local model: image prompt \(tokens) tokens, \(mtmd_input_chunks_size(chunks)) chunks")
         return (tokens, mtmd_helper_get_n_pos(chunks))
+    }
+
+    /// The encoder's cost grows with the picture, and a full screenshot reads fine at 768 px on
+    /// its long side; anything bigger is scaled down before tokenizing.
+    private static func fitForEncoding(_ data: Data) -> Data {
+        guard let source = UIImage(data: data) else { return data }
+        let longest = max(source.size.width, source.size.height)
+        let cap: CGFloat = 768
+        guard longest > cap else { return data }
+        let scale = cap / longest
+        let size = CGSize(width: (source.size.width * scale).rounded(), height: (source.size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let scaled = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            source.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return scaled.jpegData(compressionQuality: 0.9) ?? data
     }
 
     // MARK: llama.cpp helpers
