@@ -1,0 +1,47 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [build-ipa]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios
+          xcodegen generate
+
+      - name: Build unsigned .app
+        run: |
+          cd ios
+          xcodebuild -project IPhoneAgent.xcodeproj \
+            -scheme IPhoneAgent \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package IPA
+        run: |
+          APP_DIR="ios/build/dd/Build/Products/Release-iphoneos"
+          APP="$APP_DIR/IPhoneAgent.app"
+          ls -la "$APP_DIR"
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          cd dist && zip -qry IPhoneAgent-unsigned.ipa Payload
+          ls -la IPhoneAgent-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IPhoneAgent-ipa
+          path: dist/IPhoneAgent-unsigned.ipa
